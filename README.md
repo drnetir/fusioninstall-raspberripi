@@ -1,2 +1,362 @@
-# fusioninstall-raspberripi
-Fusionpbx Install on existing freeswitch raspbarrypi
+Comprehensive Guide: Manual FreeSWITCH and FusionPBX Installation on Raspberry Pi OS
+This guide will walk you through the step-by-step manual installation of a powerful VoIP system, including FreeSWITCH (as the core telephony engine) and FusionPBX (as the web-based management interface) on Raspberry Pi OS (codename ). We've accounted for common issues you might encounter during this process, based on our troubleshooting session.
+
+Introduction
+What is FreeSWITCH? A powerful open-source communication platform for building telephony systems, conferencing, messaging, and other real-time services.
+What is FusionPBX? A web-based graphical user interface (GUI) for managing and configuring FreeSWITCH. It allows you to easily manage extensions, dial plans, trunks, and advanced features like voicemail and call groups without manually editing XML files.
+Why Raspberry Pi? A small, low-power, and affordable computer ideal for developing and testing VoIP systems for home or small offices.
+Operating System: Raspberry Pi OS (Bullseye) 64-bit Lite (headless/no desktop environment). Using the 64-bit version is recommended.
+Prerequisites
+Hardware: Raspberry Pi 4 (recommended) or newer models with at least 2GB RAM.
+Operating System: Raspberry Pi OS (Bullseye) installed and accessible via SSH or directly.
+Internet: A stable internet connection to download packages and source code.
+Root/Sudo Access: You'll need sudo (or root) access to execute installation and configuration commands.
+Important Notes Before You Start
+Manual Installation: This guide focuses on manual installation from source, offering more control but requiring more time.
+Passwords: Never use default passwords. Use strong, complex passwords.
+IP Address: You'll need your Raspberry Pi's local IP address during Nginx configuration. You can find it with ip a or hostname -I. (Example: 192.168.1.62)
+Patience: Compiling FreeSWITCH takes time (it could take hours, depending on your Raspberry Pi model).
+Precise Copy/Paste: Copy and paste commands carefully. A small typo can lead to significant issues.
+Comments: Do not place comments (text after #) at the end of executable lines in configuration files (like the systemd service file). Comments should be on their own separate lines starting with #.
+Phase 1: System Preparation
+In this phase, we'll update the operating system and install essential tools required for compiling and installing software.
+
+Connect to Your Raspberry Pi via SSH:
+
+Bash
+
+ssh pi@your_raspberry_pi_ip
+(The default password for Raspberry Pi OS is usually raspberry unless you've changed it.)
+
+Update and Upgrade the System:
+
+Bash
+
+sudo apt update
+sudo apt upgrade -y
+sudo apt dist-upgrade -y
+This ensures all your system packages are up to date.
+
+Install Essential Tools and FreeSWITCH Build Dependencies:
+
+Bash
+
+sudo apt install -y build-essential git autoconf automake libtool-bin \
+libogg-dev libspeex-dev libspeexdsp-dev libldns-dev libedit-dev \
+libcurl4-openssl-dev libsqlite3-dev libopus-dev libsndfile-dev \
+libpcre3-dev libtiff-dev libjpeg-dev libncurses-dev \
+libdb-dev libpq-dev libgdbm-dev libexpat-dev libxml2-dev \
+libyuv-dev libvpx-dev libvpx-dev libwebp-dev libswresample-dev \
+libavformat-dev libavcodec-dev libssl-dev libevent-dev uuid-dev \
+libsrtp2-dev libshout-dev libtiff5-dev libjpeg62-turbo-dev \
+libpng-dev libtheora-dev libvorbis-dev libgsm1-dev zlib1g-dev \
+wget lsb-release ca-certificates gnupg2 curl ntpdate
+This command installs all the libraries and tools required to compile FreeSWITCH from source.
+
+Phase 2: PostgreSQL Database Setup
+FusionPBX requires a database to store its settings. We'll use PostgreSQL.
+
+Install PostgreSQL:
+
+Bash
+
+sudo apt install -y postgresql postgresql-client
+Enable and Start the PostgreSQL Service:
+
+Bash
+
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+Set a Password for the Default postgres User:
+This password is for database administration only and should be strong and secure.
+
+Bash
+
+sudo -u postgres psql
+At the psql prompt, enter the following command:
+
+SQL
+
+ALTER USER postgres WITH PASSWORD 'YOUR_POSTGRES_PASSWORD_HERE';
+Replace YOUR_POSTGRES_PASSWORD_HERE with your strong password.
+Then, type \q and press Enter to exit.
+
+Create Database and User for FusionPBX:
+FusionPBX needs a dedicated user and database to connect to.
+
+Bash
+
+sudo -u postgres psql
+At the psql prompt, enter the following commands:
+
+SQL
+
+CREATE DATABASE fusionpbx;
+CREATE USER fusionpbxuser WITH PASSWORD 'YOUR_FUSIONPBX_DB_PASSWORD_HERE';
+GRANT ALL PRIVILEGES ON DATABASE fusionpbx TO fusionpbxuser;
+\q
+Replace YOUR_FUSIONPBX_DB_PASSWORD_HERE with another strong password for the fusionpbxuser.
+
+Phase 3: FreeSWITCH Compilation and Installation (from Source)
+This is the most time-consuming part. We'll compile and install FreeSWITCH from its source code.
+
+Create the freeswitch User and Group:
+This is a critical step we identified during troubleshooting. FreeSWITCH needs to run under its own dedicated user and group.
+
+Bash
+
+sudo addgroup --system freeswitch || true
+sudo adduser --system --ingroup freeswitch --no-create-home --shell /bin/false freeswitch || true
+(|| true ensures the command doesn't error out if the group/user already exists.)
+
+Download FreeSWITCH Source Code:
+
+Bash
+
+cd /usr/src/
+sudo git clone https://github.com/signalwire/freeswitch.git /usr/local/freeswitch
+This downloads the source code to /usr/local/freeswitch.
+
+Navigate to Source Directory and Set Ownership for Compilation:
+
+Bash
+
+cd /usr/local/freeswitch
+sudo chown -R freeswitch:freeswitch /usr/local/freeswitch
+sudo chmod -R u+rwX,g+rX,o+rX /usr/local/freeswitch # Appropriate permissions for compilation
+Configure and Build FreeSWITCH:
+This step will take a significant amount of time.
+
+Bash
+
+sudo -u freeswitch ./bootstrap.sh -j $(nproc)
+sudo -u freeswitch ./configure --prefix=/usr/local/freeswitch --with-pgsql
+sudo make -j $(nproc)
+sudo make install
+-j $(nproc): Uses all available CPU cores to speed up the build process.
+--with-pgsql: Enables PostgreSQL support, which FusionPBX relies on.
+Set Final Permissions for FreeSWITCH Directories:
+These permissions are crucial to ensure FreeSWITCH can properly read and write its configuration files, and FusionPBX can access necessary directories.
+
+Bash
+
+sudo chown -R freeswitch:freeswitch /usr/local/freeswitch/
+sudo chmod -R g+rwX /usr/local/freeswitch/etc/freeswitch/
+sudo chmod -R g+rwX /usr/local/freeswitch/etc/freeswitch/autoload_configs/
+sudo chmod -R g+rwX /usr/local/freeswitch/etc/freeswitch/dialplan/
+sudo chmod -R g+rwX /usr/local/freeswitch/etc/freeswitch/directory/
+sudo chmod -R g+rwX /usr/local/freeswitch/var/lib/freeswitch/db/
+sudo chmod -R g+rwX /usr/local/freeswitch/share/freeswitch/sounds/ || true
+sudo chmod -R g+rwX /usr/local/freeswitch/recordings/ || true
+sudo mkdir -p /usr/local/freeswitch/run # Ensure run directory exists
+sudo chown freeswitch:freeswitch /usr/local/freeswitch/run/
+sudo chmod 775 /usr/local/freeswitch/run/
+Create the systemd Service File for FreeSWITCH (Autostart):
+This is a critical step for autostart and resolving the Unknown option # issue.
+
+Bash
+
+sudo nano /etc/systemd/system/freeswitch.service
+Carefully copy the following content into the file. Ensure there are no comments (text after #) at the end of the ExecStart line.
+
+Ini, TOML
+
+[Unit]
+Description=FreeSWITCH Voice Platform
+After=network.target local-fs.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+Environment="FS_HOME=/usr/local/freeswitch"
+Environment="FS_LOGDIR=/usr/local/freeswitch/log"
+Environment="FS_DBDIR=/usr/local/freeswitch/db"
+Environment="FS_RUNDIR=/usr/local/freeswitch/run"
+ExecStart=/usr/local/freeswitch/bin/freeswitch -nc -rp -nf
+ExecStop=/usr/local/freeswitch/bin/fs_cli -x shutdown
+User=freeswitch
+Group=freeswitch
+LimitCORE=infinity
+LimitNOFILE=100000
+LimitNPROC=60000
+LimitMEMLOCK=infinity
+IOSchedulingClass=realtime
+IOSchedulingPriority=2
+CPUSchedulingPolicy=other
+CPUSchedulingPriority=0
+RestartSec=5
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+Save the file (Press Ctrl+X, then Y, then Enter).
+
+Reload systemd and Enable FreeSWITCH Service:
+
+Bash
+
+sudo systemctl daemon-reload
+sudo systemctl enable freeswitch
+sudo systemctl start freeswitch # Start FreeSWITCH for the first time
+Verify FreeSWITCH Status:
+
+Bash
+
+sudo systemctl status freeswitch
+The output should show Active: active (running). (Errors related to SCHED_FIFO are normal and not critical.)
+
+Phase 4: Nginx Web Server and PHP-FPM Installation
+FusionPBX is a PHP application served by a web server (Nginx) and a PHP processor (PHP-FPM).
+
+Add Sury PHP PPA Repository:
+Raspberry Pi OS usually has older PHP versions. FusionPBX requires PHP 8.x. This repository provides newer PHP versions.
+
+Bash
+
+sudo apt install -y apt-transport-https lsb-release ca-certificates curl gnupg2
+curl -sSL https://packages.sury.org/php/apt.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-php.gpg
+echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list
+sudo apt update
+Install Nginx and PHP 8.2 FPM with Required Modules:
+
+Bash
+
+sudo apt install -y nginx php8.2-fpm php8.2-cli php8.2-pgsql php8.2-curl php8.2-xml php8.2-mbstring php8.2-gd php8.2-zip
+Enable and Start Nginx and PHP-FPM Services:
+
+Bash
+
+sudo systemctl enable nginx
+sudo systemctl enable php8.2-fpm
+sudo systemctl start nginx
+sudo systemctl start php8.2-fpm
+Phase 5: FusionPBX Installation and Nginx Configuration
+Download FusionPBX Source Code:
+
+Bash
+
+sudo rm -rf /var/www/fusionpbx || true
+sudo git clone https://github.com/fusionpbx/fusionpbx.git /var/www/fusionpbx
+Set Ownership and Permissions for the FusionPBX Directory:
+
+Bash
+
+sudo chown -R www-data:www-data /var/www/fusionpbx
+sudo find /var/www/fusionpbx -type d -exec chmod 755 {} \;
+sudo find /var/www/fusionpbx -type f -exec chmod 644 {} \;
+Create and Set Permissions for /etc/fusionpbx/ Directory:
+This is a critical step to resolve the "Check permissions /etc/fusionpbx/ must be writable." error.
+
+Bash
+
+sudo mkdir -p /etc/fusionpbx/
+sudo chown -R www-data:www-data /etc/fusionpbx/
+sudo chmod -R 775 /etc/fusionpbx/
+Remove Default Nginx Site:
+
+Bash
+
+sudo rm /etc/nginx/sites-enabled/default || true
+Create Nginx Configuration File for FusionPBX:
+In this step, replace YOUR_SERVER_IP_OR_DOMAIN with your Raspberry Pi's actual IP address. (Example: 192.168.1.62)
+
+Bash
+
+sudo nano /etc/nginx/sites-available/fusionpbx
+Copy the following content into the file:
+
+Nginx
+
+server {
+    listen 80;
+    listen [::]:80; # For IPv6
+    server_name YOUR_SERVER_IP_OR_DOMAIN; # Replace with your actual IP address (e.g., 192.168.1.62)
+
+    root /var/www/fusionpbx; # FusionPBX installation path
+    index index.php index.html index.htm; # Index file priority
+
+    # PHP FPM configuration
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock; # Match your PHP version (php8.2-fpm)
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+
+    # Prevent direct access to hidden files
+    location ~ /\.ht {
+        deny all;
+    }
+
+    # Handle file paths for FusionPBX
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # **Important:** Nginx access to FreeSWITCH sounds and recordings
+    location ~ ^/recordings/.*$ {
+        internal;
+        alias /usr/local/freeswitch/recordings/;
+    }
+    location ~ ^/sounds/.*$ {
+        internal;
+        alias /usr/local/freeswitch/share/freeswitch/sounds/;
+    }
+}
+Save the file (Press Ctrl+X, then Y, then Enter).
+
+Enable the Nginx Site for FusionPBX:
+
+Bash
+
+sudo ln -s /etc/nginx/sites-available/fusionpbx /etc/nginx/sites-enabled/
+Test and Restart Nginx:
+
+Bash
+
+sudo nginx -t # Test Nginx configuration (should show "syntax is ok" and "test is successful")
+sudo systemctl restart nginx
+Add www-data User to freeswitch Group:
+This step is essential for Nginx/FusionPBX to access FreeSWITCH files.
+
+Bash
+
+sudo usermod -a -G freeswitch www-data
+Phase 6: Finalization and Web Installer
+Reboot Your Raspberry Pi:
+This step is crucial for all group memberships and service changes to take effect.
+
+Bash
+
+sudo reboot
+After Rebooting and Reconnecting via SSH:
+
+Wait a few minutes for all services to start completely.
+You can verify the status of the services:
+Bash
+
+sudo systemctl status freeswitch
+sudo systemctl status nginx
+sudo systemctl status php8.2-fpm
+All of them should show active (running).
+Access the FusionPBX Web Installer via Your Browser:
+
+Open your web browser.
+Enter your Raspberry Pi's IP address in the address bar (e.g., http://192.168.1.62).
+You should see the FusionPBX installation page.
+Follow the installation wizard carefully:
+Settings: Select your language and time zone.
+Database:
+Database Type: Select PostgreSQL.
+Host: localhost
+Port: 5432
+Database Name: fusionpbx (the name you created earlier for the database)
+Username: fusionpbxuser (the user you created for database access)
+Password: Enter the password for fusionpbxuser.
+Click the Test Connection button to ensure the database connection is working.
+Admin Account: Create a strong and secure username and password for logging into the FusionPBX GUI dashboard.
+FreeSWITCH Paths:
+Root Directory: Enter **/usr/local/freeswitch**.
+Finish: Complete the installation.
+If all steps are successful, after completing the wizard, you'll be redirected to the FusionPBX login page. You can log in with the username and password you created for the FusionPBX admin account and access the FusionPBX dashboard.
+
+Congratulations! You have successfully installed and configured a powerful VoIP system including FreeSWITCH and FusionPBX manually on your Raspberry Pi. You can now begin creating extensions, configuring dial plans, and utilizing FusionPBX.
